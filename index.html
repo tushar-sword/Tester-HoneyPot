@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agentic Honey Pot Tester</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=Bebas+Neue&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ══════════════════════════════════════════════
+   DESIGN: Brutalist B&W Terminal Interface
+   ══════════════════════════════════════════════ */
+:root {
+  --bg:       #000000;
+  --bg2:      #0a0a0a;
+  --bg3:      #111111;
+  --bg4:      #1a1a1a;
+  --border:   #2a2a2a;
+  --border2:  #3a3a3a;
+  --border3:  #505050;
+  --white:    #ffffff;
+  --white2:   #e8e8e8;
+  --white3:   #c8c8c8;
+  --gray:     #888888;
+  --gray2:    #555555;
+  --gray3:    #333333;
+  --accent:   #ffffff;
+  --mono:     'IBM Plex Mono', monospace;
+  --display:  'Bebas Neue', sans-serif;
+  --sans:     'IBM Plex Sans', sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 13px; }
+body {
+  background: var(--bg);
+  color: var(--white3);
+  font-family: var(--mono);
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scanline effect */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(255,255,255,0.012) 2px,
+    rgba(255,255,255,0.012) 4px
+  );
+  pointer-events: none; z-index: 9999;
+}
+
+/* ── HEADER ─────────────────────────────────── */
+.header {
+  border-bottom: 1px solid var(--border3);
+  padding: 0 32px;
+  background: var(--bg);
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  position: sticky; top: 0; z-index: 100;
+}
+
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 16px 0;
+  border-right: 1px solid var(--border);
+  padding-right: 32px;
+}
+
+.brand-hex {
+  width: 48px; height: 48px;
+  border: 2px solid var(--white);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+  position: relative;
+  flex-shrink: 0;
+}
+.brand-hex::before {
+  content: '';
+  position: absolute; inset: 3px;
+  border: 1px solid var(--border3);
+}
+
+.brand-title {
+  font-family: var(--display);
+  font-size: 32px;
+  letter-spacing: 4px;
+  color: var(--white);
+  line-height: 1;
+}
+
+.brand-sub {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--gray);
+  letter-spacing: 3px;
+  margin-top: 4px;
+  text-transform: uppercase;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 16px 0;
+  padding-left: 32px;
+}
+
+.status-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+.status-label {
+  font-size: 8px;
+  letter-spacing: 3px;
+  color: var(--gray2);
+  text-transform: uppercase;
+}
+.status-val {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--gray);
+  display: flex; align-items: center; gap: 6px;
+}
+.status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--gray2);
+  flex-shrink: 0;
+}
+.status-val.running { color: var(--white); }
+.status-val.running .status-dot { background: var(--white); animation: blink 1s ease-in-out infinite; }
+.status-val.done { color: var(--white2); }
+.status-val.done .status-dot { background: var(--white); }
+.status-val.error { color: #aaa; }
+.status-val.error .status-dot { background: #aaa; }
+@keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0;} }
+
+/* ── MAIN LAYOUT ─────────────────────────────── */
+.layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  min-height: calc(100vh - 81px);
+}
+
+/* ── SIDEBAR ─────────────────────────────────── */
+.sidebar {
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  max-height: calc(100vh - 81px);
+  position: sticky;
+  top: 81px;
+}
+.sidebar::-webkit-scrollbar { width: 2px; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border2); }
+
+.panel-title {
+  padding: 10px 16px;
+  font-size: 8px;
+  letter-spacing: 3px;
+  color: var(--gray2);
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.panel-title .count {
+  font-size: 8px;
+  color: var(--gray2);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+}
+
+/* Config fields */
+.cfg-section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.fg { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+.fg:last-child { margin-bottom: 0; }
+.fg label {
+  font-size: 8px;
+  letter-spacing: 2px;
+  color: var(--gray2);
+  text-transform: uppercase;
+}
+input, select {
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  color: var(--white2);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 7px 9px;
+  outline: none;
+  width: 100%;
+  transition: border-color .15s;
+}
+input:focus, select:focus {
+  border-color: var(--border3);
+  background: var(--bg4);
+}
+input::placeholder { color: var(--gray2); }
+
+/* Scenario list */
+.sc-list { padding: 8px; flex: 1; }
+.sc-card {
+  padding: 10px 11px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all .12s;
+  position: relative;
+  margin-bottom: 3px;
+}
+.sc-card:hover { border-color: var(--border2); background: var(--bg3); }
+.sc-card.active {
+  border-color: var(--border3);
+  background: var(--bg3);
+}
+.sc-card.active::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 2px; background: var(--white);
+}
+.sc-card.done { border-color: var(--border2); }
+.sc-card.done .sc-score { color: var(--white2); }
+.sc-name {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--white3);
+  margin-bottom: 5px;
+  line-height: 1.3;
+}
+.sc-meta { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.tag {
+  font-size: 7px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border: 1px solid var(--border2);
+  color: var(--gray);
+}
+.sc-score { font-size: 9px; color: var(--gray2); margin-left: auto; }
+
+/* Controls */
+.ctrl-section { padding: 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.btn {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  padding: 8px 12px;
+  border: 1px solid var(--border2);
+  background: transparent;
+  color: var(--gray);
+  cursor: pointer;
+  transition: all .15s;
+  width: 100%;
+  text-align: left;
+}
+.btn:hover:not(:disabled) { border-color: var(--border3); color: var(--white2); background: var(--bg3); }
+.btn:disabled { opacity: .3; cursor: not-allowed; }
+.btn-primary {
+  border-color: var(--white);
+  color: var(--white);
+  background: var(--bg);
+}
+.btn-primary:hover:not(:disabled) { background: var(--white); color: var(--bg); }
+.btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+/* Checklist */
+.ck-section { padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.ck-item { display: flex; align-items: center; gap: 8px; }
+.ck-box {
+  width: 16px; height: 16px;
+  border: 1px solid var(--border2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; color: var(--gray2); flex-shrink: 0;
+}
+.ck-box.pass { border-color: var(--white); color: var(--white); }
+.ck-box.fail { border-color: var(--gray2); color: var(--gray2); }
+.ck-box.warn { border-color: #aaa; color: #aaa; }
+.ck-label { font-size: 9px; color: var(--gray); line-height: 1.3; }
+.ck-detail { font-size: 8px; color: var(--gray2); margin-left: auto; white-space: nowrap; }
+
+/* ── RIGHT PANEL ─────────────────────────────── */
+.right { display: flex; flex-direction: column; min-width: 0; }
+
+/* Terminal section */
+.terminal-wrap {
+  border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  height: 360px; flex-shrink: 0;
+  background: var(--bg);
+}
+
+.term-header {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  display: flex; align-items: center; justify-content: space-between;
+  flex-shrink: 0;
+}
+.term-title {
+  font-size: 9px; letter-spacing: 3px; color: var(--gray); text-transform: uppercase;
+  display: flex; align-items: center; gap: 10px;
+}
+.term-title .active-sc { color: var(--white2); }
+.term-meta { display: flex; gap: 20px; }
+.term-meta span { font-size: 9px; color: var(--gray2); letter-spacing: 1px; }
+.term-meta .hi { color: var(--white3); }
+
+.term-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  background: var(--bg);
+}
+.term-body::-webkit-scrollbar { width: 3px; }
+.term-body::-webkit-scrollbar-thumb { background: var(--border2); }
+
+.term-empty {
+  height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; color: var(--gray2);
+}
+.term-empty .e-icon { font-size: 32px; opacity: .2; }
+.term-empty p { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; }
+
+/* Terminal line rendering */
+.tline {
+  display: flex;
+  padding: 1px 16px;
+  animation: fadeIn .15s ease;
+  border-left: 2px solid transparent;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+@keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+
+/* ANSI color classes — we strip ANSI and classify by content */
+.tline-default  { color: var(--gray); border-left-color: transparent; }
+.tline-scammer  { color: #cc4444; border-left-color: #444; background: rgba(255,0,0,.03); }
+.tline-honeypot { color: var(--white3); border-left-color: #444; background: rgba(255,255,255,.02); }
+.tline-system   { color: #888; border-left-color: #333; }
+.tline-score    { color: var(--white2); border-left-color: var(--border3); }
+.tline-pass     { color: #bbb; }
+.tline-fail     { color: #888; }
+.tline-section  { color: var(--white); border-left-color: var(--border3); font-weight: 600; }
+.tline-hr       { color: var(--border3); }
+.tline-warn     { color: #aaa; }
+
+.tline-label {
+  width: 3px; flex-shrink: 0;
+  margin-right: 0;
+}
+
+.progress-area {
+  padding: 7px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg2);
+  display: flex; align-items: center; gap: 16px;
+  flex-shrink: 0;
+}
+.progress-label { font-size: 8px; letter-spacing: 2px; color: var(--gray2); white-space: nowrap; }
+.progress-track { flex: 1; height: 1px; background: var(--border); }
+.progress-fill { height: 100%; background: var(--white); transition: width .3s; }
+.progress-pct { font-size: 9px; color: var(--gray); white-space: nowrap; }
+
+/* ── TABS ─────────────────────────────────────── */
+.tabs { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.tab-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  flex-shrink: 0;
+}
+.tab-btn {
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  padding: 9px 16px;
+  border: none; background: transparent;
+  color: var(--gray2); cursor: pointer;
+  border-bottom: 1px solid transparent;
+  margin-bottom: -1px;
+  transition: all .15s;
+}
+.tab-btn:hover { color: var(--white3); }
+.tab-btn.active { color: var(--white); border-bottom-color: var(--white); }
+
+.tab-content { flex: 1; overflow-y: auto; }
+.tab-content::-webkit-scrollbar { width: 3px; }
+.tab-content::-webkit-scrollbar-thumb { background: var(--border2); }
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
+
+/* Score board */
+.scoreboard { padding: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.score-card {
+  border: 1px solid var(--border);
+  padding: 14px;
+  background: var(--bg2);
+  position: relative; overflow: hidden;
+  transition: border-color .3s;
+}
+.score-card.lit { border-color: var(--border3); }
+.score-card.lit::after {
+  content: ''; position: absolute; bottom: 0; left: 0; right: 0;
+  height: 1px; background: var(--white);
+}
+.score-label { font-size: 8px; letter-spacing: 2px; color: var(--gray2); margin-bottom: 8px; text-transform: uppercase; }
+.score-val {
+  font-family: var(--display);
+  font-size: 40px;
+  color: var(--white2);
+  line-height: 1;
+}
+.score-max { font-size: 18px; color: var(--gray2); font-family: var(--mono); font-weight: 300; }
+.score-total-wrap {
+  grid-column: 1/-1;
+  border: 1px solid var(--border3);
+  padding: 20px;
+  text-align: center;
+  background: var(--bg2);
+  position: relative;
+}
+.score-total-val {
+  font-family: var(--display);
+  font-size: 72px;
+  color: var(--white);
+  line-height: 1;
+  transition: color .5s;
+}
+.grade-badge {
+  display: inline-block;
+  font-size: 9px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  border: 1px solid var(--border3);
+  padding: 4px 14px;
+  margin-top: 8px;
+  color: var(--gray);
+}
+
+/* Intel grid */
+.intel-grid { padding: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.intel-card { border: 1px solid var(--border); padding: 12px; background: var(--bg2); }
+.intel-type { font-size: 8px; letter-spacing: 2px; color: var(--gray2); text-transform: uppercase; margin-bottom: 8px; }
+.intel-val {
+  font-size: 10px; color: var(--white3);
+  background: var(--bg3);
+  border-left: 2px solid var(--border3);
+  padding: 3px 8px; margin-bottom: 3px;
+  word-break: break-all;
+}
+.intel-val.missing { color: var(--gray2); border-left-color: var(--border); }
+.intel-empty { font-size: 10px; color: var(--gray2); font-style: italic; }
+
+/* Schema */
+.schema-list { padding: 16px; display: flex; flex-direction: column; gap: 6px; }
+.schema-item { display: flex; align-items: center; gap: 8px; }
+.schema-ico { width: 14px; height: 14px; border: 1px solid var(--border2); display: flex; align-items: center; justify-content: center; font-size: 8px; flex-shrink: 0; }
+.schema-ico.pass { border-color: var(--border3); color: var(--white3); }
+.schema-ico.fail { color: var(--gray2); }
+.schema-lbl { font-size: 10px; color: var(--gray); }
+.schema-lbl.pass { color: var(--white3); }
+
+/* Inspector */
+.inspector-pane { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.code-label { font-size: 8px; letter-spacing: 2px; color: var(--gray2); text-transform: uppercase; margin-bottom: 6px; }
+.code-block {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  padding: 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--gray);
+  overflow: auto;
+  max-height: 200px;
+  white-space: pre;
+  line-height: 1.6;
+}
+.code-block::-webkit-scrollbar { width: 3px; height: 3px; }
+.code-block::-webkit-scrollbar-thumb { background: var(--border2); }
+
+/* Summary bar */
+.summary-bar {
+  border-top: 1px solid var(--border);
+  background: var(--bg2);
+  padding: 10px 24px;
+  display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+}
+.sum-item { display: flex; flex-direction: column; gap: 3px; }
+.sum-lbl { font-size: 7px; letter-spacing: 2px; color: var(--gray2); text-transform: uppercase; }
+.sum-val { font-size: 13px; color: var(--white3); font-family: var(--sans); font-weight: 600; }
+.sum-div { width: 1px; height: 28px; background: var(--border); flex-shrink: 0; }
+.sum-final { margin-left: auto; text-align: right; }
+.sum-final .big { font-family: var(--display); font-size: 28px; color: var(--white); letter-spacing: 2px; }
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 20px; right: 20px; z-index: 9990;
+  background: var(--bg4);
+  border: 1px solid var(--border2);
+  padding: 10px 16px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--white3);
+  transform: translateY(60px);
+  opacity: 0;
+  transition: all .25s ease;
+  max-width: 300px;
+  letter-spacing: 1px;
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+
+/* Loader dots */
+.ldots span {
+  display: inline-block; width: 4px; height: 4px;
+  background: var(--gray2); border-radius: 50%; margin: 0 2px;
+  animation: ldot 1.2s ease-in-out infinite;
+}
+.ldots span:nth-child(2) { animation-delay: .2s; }
+.ldots span:nth-child(3) { animation-delay: .4s; }
+@keyframes ldot { 0%,80%,100%{transform:scale(.5);opacity:.3;} 40%{transform:scale(1);opacity:1;} }
+
+.hidden { display: none !important; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { max-height: none; position: static; }
+  .intel-grid { grid-template-columns: 1fr; }
+  .scoreboard { grid-template-columns: 1fr; }
+}
+
+/* Inactivity warning */
+.inactivity-warn {
+  background: var(--bg3);
+  border-top: 1px solid var(--border3);
+  padding: 7px 16px;
+  font-size: 9px;
+  color: #aaa;
+  display: flex; align-items: center; gap: 8px;
+  letter-spacing: 1px;
+  flex-shrink: 0;
+}
+.inactivity-warn .cd { color: var(--white2); font-size: 12px; font-weight: 700; min-width: 24px; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+  <div class="brand-block">
+    <div class="brand-hex">🍯</div>
+    <div>
+      <div class="brand-title">Agentic Honey Pot Tester</div>
+      <div class="brand-sub">// Scam API Evaluation System &nbsp;·&nbsp; v2.0 &nbsp;·&nbsp; The Defenders</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="status-block">
+      <div class="status-label">Status</div>
+      <div class="status-val" id="statusBadge">
+        <div class="status-dot"></div>
+        <span id="statusText">IDLE</span>
+      </div>
+    </div>
+    <div class="status-block">
+      <div class="status-label">Session</div>
+      <div class="status-val"><span id="sessionDisplay" style="font-size:9px">—</span></div>
+    </div>
+    <div class="status-block">
+      <div class="status-label">Timer</div>
+      <div class="status-val"><span id="timerDisplay">0.0s</span></div>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="panel-title">Configuration</div>
+    <div class="cfg-section">
+      <div class="fg">
+        <label>Endpoint URL</label>
+        <input id="eurl" type="url" placeholder="https://your-api.com/honeypot"/>
+      </div>
+      <div class="fg">
+        <label>API Key (optional)</label>
+        <input id="akey" type="text" placeholder="x-api-key value"/>
+      </div>
+      <button class="btn" onclick="saveCfg()" style="margin-top:4px">▸ Save Config</button>
+    </div>
+
+    <div class="panel-title">Test Scenarios <span class="count" id="scenarioCount">10</span></div>
+    <div class="sc-list" id="scList"></div>
+
+    <div class="panel-title" style="position:static">Controls</div>
+    <div class="ctrl-section">
+      <button class="btn btn-primary" id="runBtn" onclick="runTest()">▶ Run Selected</button>
+      <button class="btn" id="allBtn" onclick="runAll()" style="border-color:var(--border2)">⚡ Run All 10</button>
+      <div class="btn-row">
+        <button class="btn" id="stopBtn" onclick="doStop()" disabled>■ Stop</button>
+        <button class="btn" onclick="doClear()">✕ Clear</button>
+      </div>
+    </div>
+
+    <div class="panel-title" style="position:static">Requirements</div>
+    <div class="ck-section">
+      <div class="ck-item">
+        <div class="ck-box" id="ck-conn">?</div>
+        <span class="ck-label">Endpoint Accessible</span>
+      </div>
+      <div class="ck-item">
+        <div class="ck-box" id="ck-200">?</div>
+        <span class="ck-label">Returns HTTP 200</span>
+      </div>
+      <div class="ck-item">
+        <div class="ck-box" id="ck-field">?</div>
+        <span class="ck-label">Has reply field</span>
+      </div>
+      <div class="ck-item">
+        <div class="ck-box" id="ck-time">?</div>
+        <span class="ck-label">Response &lt; 30s</span>
+        <span class="ck-detail" id="ck-elapsed">—</span>
+      </div>
+      <div class="ck-item">
+        <div class="ck-box" id="ck-turns">?</div>
+        <span class="ck-label">Handles max turns</span>
+      </div>
+      <div class="ck-item">
+        <div class="ck-box" id="ck-schema">?</div>
+        <span class="ck-label">Schema Valid</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Right panel -->
+  <div class="right">
+
+    <!-- Terminal -->
+    <div class="terminal-wrap">
+      <div class="term-header">
+        <div class="term-title">
+          <span>LIVE TERMINAL OUTPUT</span>
+          <span class="active-sc" id="scenarioTitle">—</span>
+        </div>
+        <div class="term-meta">
+          <span id="turnCounter" class="hi">Turn 0/0</span>
+          <span id="lineCount">0 lines</span>
+        </div>
+      </div>
+      <div class="term-body" id="termBody">
+        <div class="term-empty" id="emptyState">
+          <div class="e-icon">🍯</div>
+          <p>Select a scenario and run test</p>
+          <p style="font-size:8px;color:var(--gray2);margin-top:4px">Configure endpoint URL first</p>
+        </div>
+      </div>
+      <div class="inactivity-warn hidden" id="inactivityWarn">
+        ⏰ No response — auto-stopping in <span class="cd" id="inactivityCountdown">30</span>s
+        <button onclick="cancelInactivity()" style="margin-left:auto;background:var(--bg4);border:1px solid var(--border3);color:var(--gray);font-family:var(--mono);font-size:9px;padding:2px 8px;cursor:pointer;letter-spacing:1px">CANCEL</button>
+      </div>
+      <div class="progress-area">
+        <span class="progress-label">PROGRESS</span>
+        <div class="progress-track"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+        <span class="progress-pct" id="progressPct">0%</span>
+      </div>
+    </div>
+
+    <!-- Analysis tabs -->
+    <div class="tabs">
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="tab(this,'score')">Score</button>
+        <button class="tab-btn" onclick="tab(this,'intel')">Intelligence</button>
+        <button class="tab-btn" onclick="tab(this,'schema')">Schema</button>
+        <button class="tab-btn" onclick="tab(this,'payload')">Payload</button>
+        <button class="tab-btn" onclick="tab(this,'req')">Inspector</button>
+      </div>
+      <div class="tab-content">
+
+        <!-- Score -->
+        <div class="tab-pane active" id="tab-score">
+          <div class="scoreboard">
+            <div class="score-card" id="sc-det">
+              <div class="score-label">Scam Detection</div>
+              <div class="score-val"><span id="sv-det">—</span><span class="score-max">/20</span></div>
+            </div>
+            <div class="score-card" id="sc-int">
+              <div class="score-label">Intelligence</div>
+              <div class="score-val"><span id="sv-int">—</span><span class="score-max">/40</span></div>
+            </div>
+            <div class="score-card" id="sc-eng">
+              <div class="score-label">Engagement</div>
+              <div class="score-val"><span id="sv-eng">—</span><span class="score-max">/20</span></div>
+            </div>
+            <div class="score-card" id="sc-str">
+              <div class="score-label">Structure</div>
+              <div class="score-val"><span id="sv-str">—</span><span class="score-max">/20</span></div>
+            </div>
+            <div class="score-total-wrap" id="sc-total">
+              <div class="score-label" style="margin-bottom:6px">Total Score</div>
+              <div class="score-total-val" id="sv-tot">—</div>
+              <div id="gradeBadge"><span class="grade-badge">AWAITING TEST</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Intel -->
+        <div class="tab-pane" id="tab-intel">
+          <div class="intel-grid" id="intelGrid">
+            <div style="grid-column:1/-1;text-align:center;padding:32px;font-size:10px;color:var(--gray2)">Run a test to see extracted intelligence</div>
+          </div>
+          <div id="agentNotesWrap" class="hidden" style="padding:0 16px 16px">
+            <div style="height:1px;background:var(--border);margin-bottom:12px"></div>
+            <div style="font-size:8px;letter-spacing:2px;color:var(--gray2);text-transform:uppercase;margin-bottom:6px">Agent Notes</div>
+            <div id="agentNotesTxt" style="font-size:10px;color:var(--gray);line-height:1.7;background:var(--bg2);border:1px solid var(--border);padding:10px;white-space:pre-wrap"></div>
+          </div>
+        </div>
+
+        <!-- Schema -->
+        <div class="tab-pane" id="tab-schema">
+          <div class="schema-list" id="schemaList">
+            <div style="font-size:10px;color:var(--gray2);padding:20px 0;text-align:center">Schema validation appears after response</div>
+          </div>
+        </div>
+
+        <!-- Payload -->
+        <div class="tab-pane" id="tab-payload">
+          <div class="inspector-pane">
+            <div>
+              <div class="code-label">Final Payload (evaluated by judges)</div>
+              <pre class="code-block" id="payloadCode">// Run test to see final payload</pre>
+            </div>
+          </div>
+        </div>
+
+        <!-- Inspector -->
+        <div class="tab-pane" id="tab-req">
+          <div class="inspector-pane">
+            <div>
+              <div class="code-label">Last Request Body →</div>
+              <pre class="code-block" id="reqCode">// Request body appears here</pre>
+            </div>
+            <div>
+              <div class="code-label">Last Response Body ←</div>
+              <pre class="code-block" id="resCode">// Response appears here</pre>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Summary bar -->
+    <div class="summary-bar">
+      <div class="sum-item">
+        <div class="sum-lbl">Scenario</div>
+        <div class="sum-val" id="sumScenario">—</div>
+      </div>
+      <div class="sum-div"></div>
+      <div class="sum-item">
+        <div class="sum-lbl">Turns</div>
+        <div class="sum-val" id="sumTurns">—</div>
+      </div>
+      <div class="sum-div"></div>
+      <div class="sum-item">
+        <div class="sum-lbl">Duration</div>
+        <div class="sum-val" id="sumDuration">—</div>
+      </div>
+      <div class="sum-div"></div>
+      <div class="sum-item">
+        <div class="sum-lbl">Avg Response</div>
+        <div class="sum-val" id="sumAvgResp">—</div>
+      </div>
+      <div class="sum-final">
+        <div class="sum-lbl">Hackathon Score</div>
+        <div class="big" id="sumFinal">—/100</div>
+      </div>
+    </div>
+
+  </div><!-- /right -->
+</div><!-- /layout -->
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════
+// SCENARIOS (same as tester.js)
+// ══════════════════════════════════════════════════════════
+const SCENARIOS = [
+  { scenarioId:'bank_kyc_freeze',      name:'SBI Suspicious Login',       channel:'SMS',      scamType:'bank_fraud',        maxTurns:15, weight:10,
+    fakeData:{ bankAccount:'3748291056473829', upiId:'sbiverify.secure@okaxis', phoneNumber:'+91-9821034567', emailAddress:'kyc.update@sbi-secure-portal.in' } },
+  { scenarioId:'wfh_data_entry',       name:'WFH Data Entry Role',        channel:'WhatsApp', scamType:'job_scam',          maxTurns:15, weight:10,
+    fakeData:{ bankAccount:'9988776655443322', upiId:'hr.registration@quickpay', phoneNumber:'+91-7788991234', emailAddress:'hr.operations@career-fasttrack.com' } },
+  { scenarioId:'crypto_investment',    name:'CryptoPro Insider Returns',  channel:'Telegram', scamType:'crypto_investment', maxTurns:15, weight:10,
+    fakeData:{ bankAccount:'8374019283746501', upiId:'cryptopro.deposit@ibl', phoneNumber:'+91-9902837465', phishingLink:'http://cryptopro-india-trade.com/register?ref=2025' } },
+  { scenarioId:'electricity_disconnect',name:'Electricity Disconnection', channel:'SMS',      scamType:'utility_scam',      maxTurns:15, weight:10,
+    fakeData:{ bankAccount:'1122334455667788', upiId:'powerbill.support@ibl', phoneNumber:'+91-8877665544', emailAddress:'billing@power-dept-resolution.com' } },
+  { scenarioId:'tax_refund',           name:'Income Tax Refund Pending',  channel:'SMS',      scamType:'refund_scam',       maxTurns:15, weight:10,
+    fakeData:{ bankAccount:'3746501928374650', upiId:'refund.process@itdpay', phoneNumber:'+91-7788553311', emailAddress:'refund@incometax-portal-help.org' } },
+  { scenarioId:'amazon_overrefund',    name:'Amazon Excess Refund',       channel:'Phone',    scamType:'refund_scam',       maxTurns:15, weight:10,
+    fakeData:{ bankAccount:'9182736450918273', upiId:'amazon.returns@axispay', phoneNumber:'+91-9900112233', emailAddress:'refund-ops@amazon-support-india.org' } },
+  { scenarioId:'instant_loan',         name:'Pre-approved Personal Loan', channel:'WhatsApp', scamType:'loan_scam',         maxTurns:15, weight:10,
+    fakeData:{ bankAccount:'7465019283746501', upiId:'loanapproval.nbfc@ibl', phoneNumber:'+91-6655443322', emailAddress:'loans@instantcredit-nbfc.com' } },
+  { scenarioId:'windows_virus',        name:'Microsoft Virus Alert',      channel:'Popup',    scamType:'tech_support',      maxTurns:15, weight:10,
+    fakeData:{ bankAccount:'5019283746501928', upiId:'microsoft.support@techpay', phoneNumber:'+91-7766554433', emailAddress:'support@microsoft-helpdesk-india.com' } },
+  { scenarioId:'delivery_reschedule',  name:'Package Delivery Issue',     channel:'Email',    scamType:'phishing_link',     maxTurns:15, weight:10,
+    fakeData:{ upiId:'delivery.fee@ibl', phoneNumber:'+91-7042198653', phishingLink:'http://parcel-redelivery-update.com/track?id=28374', emailAddress:'delivery.support@parcel-update-center.net' } },
+  { scenarioId:'upi_loyalty_reward',   name:'UPI Loyalty Cashback',       channel:'SMS',      scamType:'upi_scam',          maxTurns:15, weight:10,
+    fakeData:{ bankAccount:'6291847503918274', upiId:'reward.claim@ibl', phoneNumber:'+91-8130045672', phishingLink:'http://upi-reward-digital-claim.com/verify' } },
+];
+
+const KEY_MAP = { bankAccount:'bankAccounts', upiId:'upiIds', phoneNumber:'phoneNumbers', phishingLink:'phishingLinks', emailAddress:'emailAddresses' };
+
+// ══════════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════════
+let sel = SCENARIOS[0];
+let running = false;
+let stopped = false;
+let lineCount = 0;
+let sessionKey = null;
+let sseSource = null;
+let timerInt = null;
+let startT = null;
+let responseTimes = [];
+let allScores = {};
+let turnCount = 0;
+let allRunMode = false;
+let allRunQueue = [];
+
+// ══════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════
+(function init() {
+  const list = document.getElementById('scList');
+  list.innerHTML = SCENARIOS.map(s => `
+    <div class="sc-card" id="sc-${s.scenarioId}" onclick="pick('${s.scenarioId}')">
+      <div class="sc-name">${s.name}</div>
+      <div class="sc-meta">
+        <span class="tag">${s.channel}</span>
+        <span class="tag">${s.scamType}</span>
+        <span class="sc-score" id="ts-${s.scenarioId}">—/100</span>
+      </div>
+    </div>`).join('');
+  pick(SCENARIOS[0].scenarioId);
+  const eu = localStorage.getItem('ht_url'); if(eu) document.getElementById('eurl').value = eu;
+  const ak = localStorage.getItem('ht_key'); if(ak) document.getElementById('akey').value = ak;
+})();
+
+// ══════════════════════════════════════════════════════════
+// UI HELPERS
+// ══════════════════════════════════════════════════════════
+function pick(sid) {
+  if (running) return;
+  sel = SCENARIOS.find(s => s.scenarioId === sid) || sel;
+  document.querySelectorAll('.sc-card').forEach(e => e.classList.remove('active'));
+  document.getElementById('sc-' + sid)?.classList.add('active');
+  document.getElementById('scenarioTitle').textContent = sel.name;
+  document.getElementById('turnCounter').textContent = `Turn 0/${sel.maxTurns}`;
+}
+
+function saveCfg() {
+  localStorage.setItem('ht_url', document.getElementById('eurl').value);
+  localStorage.setItem('ht_key', document.getElementById('akey').value);
+  toast('Config saved');
+}
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+function setStatus(txt, cls) {
+  const b = document.getElementById('statusBadge');
+  b.className = 'status-val ' + (cls || '');
+  document.getElementById('statusText').textContent = txt;
+}
+
+function setCheck(id, state, ico) {
+  const el = document.getElementById('ck-' + id);
+  if (!el) return;
+  el.className = 'ck-box' + (state ? ' ' + state : '');
+  el.textContent = ico;
+}
+function resetChecks() {
+  ['conn','200','field','time','turns','schema'].forEach(id => setCheck(id, '', '?'));
+  document.getElementById('ck-elapsed').textContent = '—';
+}
+function resetScores() {
+  ['det','int','eng','str'].forEach(id => {
+    document.getElementById('sv-' + id).textContent = '—';
+    document.getElementById('sc-' + id).className = 'score-card';
+  });
+  document.getElementById('sv-tot').textContent = '—';
+  document.getElementById('gradeBadge').innerHTML = '<span class="grade-badge">AWAITING TEST</span>';
+}
+
+function setProgress(cur, max) {
+  const pct = max > 0 ? Math.round(cur / max * 100) : 0;
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressPct').textContent = pct + '%';
+  document.getElementById('turnCounter').textContent = `Turn ${cur}/${max}`;
+}
+
+function startTimer() {
+  startT = Date.now();
+  clearInterval(timerInt);
+  timerInt = setInterval(() => {
+    document.getElementById('timerDisplay').textContent = ((Date.now() - startT) / 1000).toFixed(1) + 's';
+  }, 100);
+}
+function stopTimer() {
+  clearInterval(timerInt);
+  return startT ? ((Date.now() - startT) / 1000).toFixed(2) : 0;
+}
+
+function tab(btn, t) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + t).classList.add('active');
+  btn.classList.add('active');
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function doClear() {
+  if (running) return;
+  lineCount = 0;
+  document.getElementById('termBody').innerHTML = `<div class="term-empty" id="emptyState"><div class="e-icon">🍯</div><p>Select a scenario and run test</p><p style="font-size:8px;color:var(--gray2);margin-top:4px">Configure endpoint URL first</p></div>`;
+  setProgress(0, 10); resetChecks(); resetScores();
+  document.getElementById('payloadCode').textContent = '// Run test to see final payload';
+  document.getElementById('reqCode').textContent = '// Request body appears here';
+  document.getElementById('resCode').textContent = '// Response appears here';
+  document.getElementById('intelGrid').innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:32px;font-size:10px;color:var(--gray2)">Run a test to see extracted intelligence</div>';
+  document.getElementById('schemaList').innerHTML = '<div style="font-size:10px;color:var(--gray2);padding:20px 0;text-align:center">Schema validation appears after response</div>';
+  document.getElementById('agentNotesWrap').classList.add('hidden');
+  document.getElementById('timerDisplay').textContent = '0.0s';
+  document.getElementById('lineCount').textContent = '0 lines';
+  document.getElementById('ck-elapsed').textContent = '—';
+  ['sumScenario','sumTurns','sumDuration','sumAvgResp'].forEach(id => document.getElementById(id).textContent = '—');
+  document.getElementById('sumFinal').textContent = '—/100';
+  setStatus('IDLE');
+}
+
+function doStop() {
+  stopped = true;
+  if (sessionKey) {
+    fetch('/api/stop', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ sessionKey }) });
+  }
+  toast('Stopping...');
+}
+
+// ══════════════════════════════════════════════════════════
+// ANSI STRIP + LINE CLASSIFIER
+// ══════════════════════════════════════════════════════════
+function stripAnsi(str) {
+  return str.replace(/\x1b\[[0-9;]*m/g, '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+}
+
+function classifyLine(raw) {
+  const t = stripAnsi(raw).trim();
+  if (!t) return 'tline-hr';
+  if (t.startsWith('═') || t.startsWith('─') || t === '' || /^[═─]+$/.test(t)) return 'tline-hr';
+  if (/🦠\s*SCAMMER/.test(raw) || /SCAMMER/.test(raw)) return 'tline-scammer';
+  if (/🍯\s*HONEYPOT/.test(raw) || /HONEYPOT/.test(raw)) return 'tline-honeypot';
+  if (/SCORE|SCENARIO SCORE|FINAL SCORE|HACKATHON/.test(t)) return 'tline-score';
+  if (/\[1\]|\[2\]|\[3\]|\[4\]|\[★\]|\[\*\]/.test(t)) return 'tline-section';
+  if (/✓/.test(t)) return 'tline-pass';
+  if (/✗/.test(t)) return 'tline-fail';
+  if (/⚠|TIMEOUT|ERROR|CRASH|WARN|WARNING/.test(t)) return 'tline-warn';
+  if (/SESSION|Sending|received|done|started|Turn [0-9]|Callback|Waiting/.test(t)) return 'tline-system';
+  if (/^\s*[A-Z][A-Z ]+\s*$/.test(t) && t.length < 40) return 'tline-section';
+  return 'tline-default';
+}
+
+// ══════════════════════════════════════════════════════════
+// TERMINAL OUTPUT
+// ══════════════════════════════════════════════════════════
+function addLine(rawText, isStderr) {
+  const body = document.getElementById('termBody');
+  document.getElementById('emptyState')?.remove();
+
+  const cls = isStderr ? 'tline-warn' : classifyLine(rawText);
+  const clean = esc(stripAnsi(rawText));
+
+  const d = document.createElement('div');
+  d.className = 'tline ' + cls;
+  d.innerHTML = clean || '&nbsp;';
+  body.appendChild(d);
+  body.scrollTop = body.scrollHeight;
+
+  lineCount++;
+  document.getElementById('lineCount').textContent = lineCount + ' lines';
+
+  // Parse meaningful lines to update UI
+  parseLineForUI(rawText);
+}
+
+// ══════════════════════════════════════════════════════════
+// SMART PARSING — updates checklist, scores, inspector from terminal output
+// ══════════════════════════════════════════════════════════
+function parseLineForUI(raw) {
+  const t = stripAnsi(raw).trim();
+
+  // Connection / HTTP
+  if (/✓.*(HTTP 200|reachable)/i.test(t) || /HTTP 200/i.test(t)) {
+    setCheck('conn', 'pass', '✓');
+    setCheck('200',  'pass', '✓');
+    const m = t.match(/(\d+)ms/);
+    if (m) {
+      const ms = parseInt(m[1]);
+      responseTimes.push(ms);
+      document.getElementById('ck-elapsed').textContent = ms + 'ms';
+      setCheck('time', ms < 30000 ? 'pass' : 'fail', ms < 30000 ? '✓' : '✗');
+    }
+  }
+  if (/CONNECTION ERROR|TIMEOUT/.test(t)) { setCheck('conn','fail','✗'); }
+  if (/reply|message|text field/.test(t) && /No /.test(t)) { setCheck('field','fail','✗'); }
+  if (/✓.*reply|has.*reply/i.test(t)) { setCheck('field','pass','✓'); }
+
+  // Turn tracking — "-- Turn X/Y"
+  const turnMatch = t.match(/-- Turn (\d+)\/(\d+)/);
+  if (turnMatch) {
+    const cur = parseInt(turnMatch[1]);
+    const max = parseInt(turnMatch[2]);
+    turnCount = cur;
+    setProgress(cur, max);
+    if (cur >= max) setCheck('turns', 'pass', '✓');
+    else setCheck('turns', 'warn', '~');
+  }
+
+  // Session ended
+  if (/session (ended|closed|done)/i.test(t)) {
+    setCheck('turns', 'pass', '✓');
+  }
+
+  // Final score line: "SCENARIO SCORE: 88/100" or "FINAL SCORE = 88.0/100"
+  const scoreMatch = t.match(/(?:SCENARIO SCORE|FINAL SCORE)[:\s=]+(\d+(?:\.\d+)?)\/100/i);
+  if (scoreMatch) {
+    const score = parseFloat(scoreMatch[1]);
+    document.getElementById('sv-tot').textContent = Math.round(score);
+    document.getElementById('sumFinal').textContent = Math.round(score) + '/100';
+    const g = gradeScore(score);
+    document.getElementById('gradeBadge').innerHTML = `<span class="grade-badge">${g.l}</span>`;
+    allScores[sel.scenarioId] = Math.round(score);
+    // Update sidebar
+    const el = document.getElementById('ts-' + sel.scenarioId);
+    if (el) { el.textContent = Math.round(score) + '/100'; }
+    const card = document.getElementById('sc-' + sel.scenarioId);
+    if (card) card.classList.add('done');
+  }
+
+  // Individual scores: "Det:20/20  Intel:30/40  Eng:18/20  Str:20/20"
+  const detM = t.match(/Det:(\d+)\/20/);   if (detM) { document.getElementById('sv-det').textContent = detM[1]; document.getElementById('sc-det').classList.add('lit'); }
+  const intM = t.match(/Intel:(\d+)\/40/); if (intM) { document.getElementById('sv-int').textContent = intM[1]; document.getElementById('sc-int').classList.add('lit'); }
+  const engM = t.match(/Eng:(\d+)\/20/);   if (engM) { document.getElementById('sv-eng').textContent = engM[1]; document.getElementById('sc-eng').classList.add('lit'); }
+  const strM = t.match(/Str:(\d+)\/20/);   if (strM) { document.getElementById('sv-str').textContent = strM[1]; document.getElementById('sc-str').classList.add('lit'); }
+
+  // Schema: infer from line content (no payload access in web mode)
+  if (/schema|sessionId|extractedIntelligence/i.test(t) && /✓/.test(t)) setCheck('schema','pass','✓');
+  if (/schema/i.test(t) && /✗/.test(t)) setCheck('schema','fail','✗');
+}
+
+function gradeScore(s) {
+  if (s >= 90) return { l: 'EXCELLENT' };
+  if (s >= 70) return { l: 'GOOD' };
+  if (s >= 50) return { l: 'MODERATE' };
+  return              { l: 'NEEDS WORK' };
+}
+
+// ══════════════════════════════════════════════════════════
+// SSE STREAM HANDLER
+// ══════════════════════════════════════════════════════════
+function connectSSE(key) {
+  if (sseSource) { sseSource.close(); sseSource = null; }
+
+  const es = new EventSource(`/api/stream?sessionKey=${encodeURIComponent(key)}`);
+  sseSource = es;
+
+  es.addEventListener('started', () => {
+    setStatus('RUNNING', 'running');
+    startTimer();
+  });
+
+  es.addEventListener('line', e => {
+    const { text, stderr } = JSON.parse(e.data);
+    addLine(text, stderr);
+  });
+
+  es.addEventListener('done', e => {
+    const { code } = JSON.parse(e.data);
+    const elapsed = stopTimer();
+    running = false;
+    stopped = false;
+    document.getElementById('runBtn').disabled = false;
+    document.getElementById('allBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+    setStatus(code === 0 ? 'COMPLETE' : 'DONE', 'done');
+    // Summary bar
+    document.getElementById('sumScenario').textContent = sel.name;
+    document.getElementById('sumTurns').textContent = `${turnCount}/${sel.maxTurns}`;
+    document.getElementById('sumDuration').textContent = elapsed + 's';
+    if (responseTimes.length) {
+      const avg = Math.round(responseTimes.reduce((a,b)=>a+b,0)/responseTimes.length);
+      document.getElementById('sumAvgResp').textContent = avg + 'ms';
+    }
+    toast(`Test complete — score: ${document.getElementById('sv-tot').textContent}/100`);
+
+    es.close();
+    sseSource = null;
+
+    // Continue "run all" queue
+    if (allRunMode && allRunQueue.length > 0 && !stopped) {
+      setTimeout(() => runNextInQueue(), 1000);
+    } else {
+      allRunMode = false;
+    }
+  });
+
+  es.addEventListener('stopped', () => {
+    running = false; stopped = false;
+    document.getElementById('runBtn').disabled = false;
+    document.getElementById('allBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+    setStatus('STOPPED', 'error');
+    stopTimer();
+    es.close();
+    sseSource = null;
+    allRunMode = false;
+  });
+
+  es.addEventListener('error', e => {
+    const d = JSON.parse(e.data || '{}');
+    addLine('ERROR: ' + d.message, true);
+  });
+}
+
+// ══════════════════════════════════════════════════════════
+// RUN TEST
+// ══════════════════════════════════════════════════════════
+async function runTest() {
+  if (running) return;
+  const url = document.getElementById('eurl').value.trim();
+  if (!url) { toast('Enter endpoint URL first'); return; }
+
+  running = true; stopped = false; responseTimes = []; turnCount = 0;
+  document.getElementById('runBtn').disabled  = true;
+  document.getElementById('allBtn').disabled  = true;
+  document.getElementById('stopBtn').disabled = false;
+
+  document.getElementById('termBody').innerHTML = '';
+  lineCount = 0;
+  document.getElementById('lineCount').textContent = '0 lines';
+  resetChecks(); resetScores();
+  setProgress(0, sel.maxTurns);
+  setStatus('CONNECTING…');
+
+  sessionKey = sel.scenarioId + '-' + Date.now();
+  document.getElementById('sessionDisplay').textContent = sessionKey.slice(0, 24) + '…';
+  document.getElementById('scenarioTitle').textContent = sel.name;
+
+  // Connect SSE first, then fire POST
+  connectSSE(sessionKey);
+  await new Promise(r => setTimeout(r, 80)); // let SSE handshake
+
+  const apiKey = document.getElementById('akey').value.trim();
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, apiKey, scenario: sel.scenarioId, sessionKey }),
+    });
+    if (!r.ok) {
+      const err = await r.json();
+      addLine('SERVER ERROR: ' + err.error, true);
+      running = false;
+      document.getElementById('runBtn').disabled = false;
+      document.getElementById('allBtn').disabled = false;
+      document.getElementById('stopBtn').disabled = true;
+    }
+  } catch(e) {
+    addLine('Could not reach HoneyTrap server: ' + e.message, true);
+    addLine('Make sure server.js is running → node server.js', true);
+    running = false;
+    document.getElementById('runBtn').disabled = false;
+    document.getElementById('allBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// RUN ALL
+// ══════════════════════════════════════════════════════════
+function runAll() {
+  if (running) return;
+  allScores = {};
+  allRunMode = true;
+  allRunQueue = [...SCENARIOS];
+  runNextInQueue();
+}
+
+function runNextInQueue() {
+  if (allRunQueue.length === 0 || stopped) {
+    allRunMode = false;
+    if (!stopped) {
+      const total = Object.values(allScores).reduce((a,b)=>a+b,0);
+      const avg = (total / SCENARIOS.length).toFixed(1);
+      addLine(`\n  🏆 ALL DONE — Avg: ${avg}/100 | Combined: ${total}/${SCENARIOS.length * 100}`, false);
+      toast(`All done! Avg: ${avg}/100`);
+    }
+    return;
+  }
+  const next = allRunQueue.shift();
+  pick(next.scenarioId);
+  setTimeout(() => runTest(), 400);
+}
+
+// No inactivity in web mode — tester.js handles it internally
+function cancelInactivity() {}
+</script>
+</body>
+</html>

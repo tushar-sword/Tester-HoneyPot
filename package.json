@@ -1,0 +1,19 @@
+{
+  "name": "honeytrap-tester",
+  "version": "2.0.0",
+  "description": "Agentic Honeypot Tester — Web UI + CLI",
+  "type": "module",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start":   "node server.js",
+    "dev":     "node server.js",
+    "cli":     "node tester.js",
+    "test":    "node tester.js --url $HONEYPOT_URL"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1"
+  }
+}
