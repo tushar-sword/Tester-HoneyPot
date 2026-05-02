@@ -214,13 +214,6 @@ Default: `http://localhost:4000`
 
 ---
 
-## 📜 License
-
-MIT License
-
-Built for research, defense simulations, and hackathons. No warranties.
-
----
 
 ## 🤝 Contributing
 
@@ -236,12 +229,5 @@ PRs welcome. Just don’t break the scoring system and pretend it was a feature.
 
 ---
 
-## 🔗 Links
-
-* Demo / Hackathon Submission
-* GitHub Repository
-* Project Showcase
-
----
 
 **Built by The Defenders**
