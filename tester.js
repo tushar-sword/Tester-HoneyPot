@@ -3,15 +3,20 @@
  * ╔══════════════════════════════════════════════════════════════════╗
  * ║   🍯  HoneyTrap CLI Tester                                      ║
  * ║                                                                  ║
- * ║   Usage:                                                         ║
+ * ║   Usage (CLI):                                                   ║
  * ║     node tester.js --url https://your-api.com/honeypot           ║
  * ║     node tester.js --url <url> --key <apiKey>                    ║
- * ║     node tester.js --url <url> --scenario bank_fraud             ║
+ * ║     node tester.js --url <url> --scenario bank_kyc_freeze        ║
  * ║     node tester.js --url <url> --verbose                         ║
  * ║                                                                  ║
- * ║   CALLBACK SERVER:                                               ║
- * ║   Starts a local HTTP server (default port 3333).                ║
- * ║   Set FINAL_CALLBACK_URL in your honeypot config to:             ║
+ * ║   When run via server.js (web mode):                             ║
+ * ║     CALLBACK_URL env var is injected automatically.              ║
+ * ║     The /callback route on server.js receives the final payload. ║
+ * ║                                                                  ║
+ * ║   CLI CALLBACK SERVER:                                           ║
+ * ║     Falls back to local HTTP server on port 3333 when            ║
+ * ║     CALLBACK_URL env var is NOT set.                             ║
+ * ║     Set FINAL_CALLBACK_URL in your honeypot to:                  ║
  * ║       http://<your-machine-ip>:3333/callback                     ║
  * ╚══════════════════════════════════════════════════════════════════╝
  *
@@ -40,12 +45,13 @@ const ONLY            = getArg('--scenario')    || null;
 const LISTEN_PORT     = parseInt(getArg('--port')       || '3333');
 const TIMEOUT_MS      = parseInt(getArg('--timeout')    || '30000');
 const TURN_DELAY_MS   = parseInt(getArg('--delay')      || '800');
-const PAYLOAD_WAIT    = parseInt(getArg('--wait')       || '60');
-// How long (ms) to wait for the next scammer turn before treating the
-// conversation as "scammer went silent" and aborting the scenario.
-// Default 30 000 ms. Pass --inactivity 0 to disable.
+const PAYLOAD_WAIT    = parseInt(getArg('--wait')       || '120');
 const INACTIVITY_MS   = parseInt(getArg('--inactivity') || '30000');
 const VERBOSE         = hasFlag('--verbose');
+
+// ── KEY: if server.js injected CALLBACK_URL, use it; otherwise fall back to port 3333
+const INJECTED_CALLBACK_URL = process.env.CALLBACK_URL || null;
+const WEB_MODE = !!INJECTED_CALLBACK_URL;
 
 if (!ENDPOINT) {
   console.error('\n  No endpoint specified.');
@@ -72,9 +78,9 @@ const CY = s => `${C.cyan}${s}${C.reset}`;
 const TICK  = G('✓');
 const CROSS = R('✗');
 
-const hr   = (c = '─', n = 66) => D(c.repeat(n));
-const pad  = (s, n) => String(s).padEnd(n);
-const rpad = (s, n) => String(s).padStart(n);
+const hr    = (c = '─', n = 66) => D(c.repeat(n));
+const pad   = (s, n) => String(s).padEnd(n);
+const rpad  = (s, n) => String(s).padStart(n);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function wrap(text, prefix = '     ', maxLen = 64) {
@@ -99,11 +105,7 @@ function getLocalIP() {
   return '127.0.0.1';
 }
 
-// ─── Inactivity wait ──────────────────────────────────────────────────────────
-// Called between turns. Waits TURN_DELAY_MS first (normal pace), then starts
-// a visible countdown for INACTIVITY_MS.  In scripted mode the next turn is
-// always ready, so the countdown resolves instantly via setImmediate.
-// In a future interactive / real-scammer mode it would count down to zero.
+// ─── Inactivity wait ─────────────────────────────────────────────────────────
 function waitWithInactivity() {
   return new Promise(resolve => {
     setTimeout(() => {
@@ -125,7 +127,7 @@ function waitWithInactivity() {
         }
       }, 1000);
 
-      // Scripted turns are always ready — skip the countdown immediately.
+      // In scripted mode turns are always ready — resolve immediately
       setImmediate(() => {
         clearInterval(interval);
         process.stdout.write('\r' + ' '.repeat(70) + '\r');
@@ -135,14 +137,20 @@ function waitWithInactivity() {
   });
 }
 
-// ─── Callback Server ──────────────────────────────────────────────────────────
+// ─── Callback handling ───────────────────────────────────────────────────────
+// In WEB MODE:  server.js /callback receives the POST and we poll for it here.
+// In CLI MODE:  we start our own HTTP server on port 3333.
+
 const pendingCallbacks = new Map();
 const receivedPayloads = new Map();
 let   callbackServer   = null;
 
+// CLI MODE — start local server
 function startCallbackServer() {
+  if (WEB_MODE) return Promise.resolve(); // server.js handles it
+
   return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
+    const srv = http.createServer((req, res) => {
       if (req.method !== 'POST') {
         res.writeHead(405); res.end(JSON.stringify({ error: 'POST only' })); return;
       }
@@ -159,29 +167,16 @@ function startCallbackServer() {
 
         const sid = payload?.sessionId || '__any__';
         console.log(`\n  ${TICK} ${G('Callback received')} for session: ${D(sid)}`);
-
-        const resolve2 = (key) => {
-          if (!pendingCallbacks.has(key)) return false;
-          const { resolve: res2, timer } = pendingCallbacks.get(key);
-          clearTimeout(timer);
-          pendingCallbacks.delete(key);
-          res2(payload);
-          return true;
-        };
-
-        if (!resolve2(sid) && !resolve2('__any__')) {
-          receivedPayloads.set(sid, payload);
-          receivedPayloads.set('__any__', payload);
-        }
+        _resolveCallback(sid, payload);
       });
     });
 
-    server.on('error', err => {
+    srv.on('error', err => {
       if (err.code === 'EADDRINUSE') reject(new Error(`Port ${LISTEN_PORT} in use. Use --port <n>`));
       else reject(err);
     });
 
-    server.listen(LISTEN_PORT, '0.0.0.0', () => { callbackServer = server; resolve(server); });
+    srv.listen(LISTEN_PORT, '0.0.0.0', () => { callbackServer = srv; resolve(srv); });
   });
 }
 
@@ -192,7 +187,56 @@ function stopCallbackServer() {
   });
 }
 
+function _resolveCallback(sid, payload) {
+  const resolve2 = (key) => {
+    if (!pendingCallbacks.has(key)) return false;
+    const { resolve: res2, timer } = pendingCallbacks.get(key);
+    clearTimeout(timer);
+    pendingCallbacks.delete(key);
+    res2(payload);
+    return true;
+  };
+  if (!resolve2(sid) && !resolve2('__any__')) {
+    receivedPayloads.set(sid, payload);
+    receivedPayloads.set('__any__', payload);
+  }
+}
+
+// WEB MODE — poll server.js /api/payload/:sessionId
+async function pollForPayload(sessionId, timeoutSec) {
+  const base    = INJECTED_CALLBACK_URL.replace('/callback', '');
+  const pollUrl = `${base}/api/payload/${encodeURIComponent(sessionId)}`;
+  const start   = Date.now();
+
+  console.log(`  ${D('⏳ Polling for payload...')} ${D(pollUrl)}`);
+
+  while ((Date.now() - start) < timeoutSec * 1000) {
+    await sleep(2000);
+    try {
+      const r = await fetch(pollUrl);
+      if (r.ok) {
+        const j = await r.json();
+        if (j.payload) {
+          return j.payload;
+        }
+      }
+    } catch (_) {}
+
+    const remaining = Math.round(timeoutSec - (Date.now() - start) / 1000);
+    process.stdout.write(`\r  ${D('⏳ Waiting for callback...')} ${Y(remaining + 's')} remaining   `);
+  }
+
+  process.stdout.write('\r' + ' '.repeat(60) + '\r');
+  return null;
+}
+
 function waitForCallback(sessionId, timeoutSec) {
+  // WEB MODE: poll server.js for the payload
+  if (WEB_MODE) {
+    return pollForPayload(sessionId, timeoutSec);
+  }
+
+  // CLI MODE: wait on local server
   if (receivedPayloads.has(sessionId)) {
     const p = receivedPayloads.get(sessionId);
     receivedPayloads.delete(sessionId);
@@ -276,18 +320,11 @@ function scoreIntelligence(extracted, fakeData) {
     if (!arrayKey) continue;
 
     const isScored = SCORED_TYPES.includes(fk);
-    const arr = extracted?.[arrayKey] || [];
-    const found = arr.some(v => matchValue(String(v), String(fv)));
+    const arr      = extracted?.[arrayKey] || [];
+    const found    = arr.some(v => matchValue(String(v), String(fv)));
 
-    results.push({
-      fakeKey: fk,
-      arrayKey,
-      value: fv,
-      found,
-      allValues: arr.map(String),
-      pts: (isScored && found) ? 10 : 0,
-      scored: isScored,
-    });
+    results.push({ fakeKey: fk, arrayKey, value: fv, found,
+      allValues: arr.map(String), pts: (isScored && found) ? 10 : 0, scored: isScored });
   }
 
   const raw    = results.reduce((s, r) => s + r.pts, 0);
@@ -301,12 +338,8 @@ function matchValue(actual, expected) {
 }
 
 function scoreEngagement(payload, historyLen) {
-  const dur  = payload?.engagementMetrics?.engagementDurationSeconds
-            ?? payload?.engagementDurationSeconds
-            ?? 0;
-  const msgs = payload?.engagementMetrics?.totalMessagesExchanged
-            ?? payload?.totalMessagesExchanged
-            ?? historyLen;
+  const dur  = payload?.engagementMetrics?.engagementDurationSeconds ?? payload?.engagementDurationSeconds ?? 0;
+  const msgs = payload?.engagementMetrics?.totalMessagesExchanged    ?? payload?.totalMessagesExchanged    ?? historyLen;
 
   const rows = [
     { label: 'Duration > 0 seconds',    ok: dur  >   0,  pts: 5 },
@@ -315,15 +348,11 @@ function scoreEngagement(payload, historyLen) {
     { label: 'Messages exchanged < 15', ok: msgs <  15,  pts: 5 },
   ];
 
-  return {
-    earned: rows.filter(r => r.ok).reduce((s, r) => s + r.pts, 0),
-    rows, dur, msgs,
-  };
+  return { earned: rows.filter(r => r.ok).reduce((s, r) => s + r.pts, 0), rows, dur, msgs };
 }
 
 function scoreStructure(payload) {
   const p = payload ?? {};
-
   const fields = [
     { label: 'sessionId',             pts: 0,   ok: !!(p.sessionId) },
     { label: 'scamDetected',          pts: 5,   ok: 'scamDetected' in p },
@@ -331,9 +360,7 @@ function scoreStructure(payload) {
     { label: 'engagementMetrics',     pts: 2.5, ok: !!(p.engagementMetrics) },
     { label: 'agentNotes',            pts: 2.5, ok: !!(p.agentNotes) },
   ];
-
-  const earned = fields.reduce((s, f) => s + (f.ok ? f.pts : 0), 0);
-  return { fields, earned };
+  return { fields, earned: fields.reduce((s, f) => s + (f.ok ? f.pts : 0), 0) };
 }
 
 function checkTurnResponse(data) {
@@ -347,7 +374,7 @@ function getGrade(score) {
   return                  { label: 'NEEDS WORK', color: C.red   };
 }
 
-// ─── Payload printer (includes otherInfo) ────────────────────────────────────
+// ─── Payload printer ─────────────────────────────────────────────────────────
 function printPayload(p) {
   console.log('\n' + D('  ┌─ PAYLOAD ' + '─'.repeat(54)));
   console.log(D('  │  ') + D('sessionId       : ') + BW(p.sessionId ?? R('MISSING')));
@@ -357,13 +384,12 @@ function printPayload(p) {
 
   const metrics = p.engagementMetrics || {};
   console.log(D('  │  ') + D('engagementMetrics:'));
-  console.log(D('  │    ') + D(pad('totalMessagesExchanged', 26) + ': ') + BW(String(metrics.totalMessagesExchanged ?? '?')));
+  console.log(D('  │    ') + D(pad('totalMessagesExchanged', 26)    + ': ') + BW(String(metrics.totalMessagesExchanged    ?? '?')));
   console.log(D('  │    ') + D(pad('engagementDurationSeconds', 26) + ': ') + BW(String(metrics.engagementDurationSeconds ?? '?')) + D('s'));
 
   const intel = p.extractedIntelligence || {};
   console.log(D('  │  ') + D('extractedIntelligence:'));
 
-  // Scored intel
   const SCORED_KEYS = ['phoneNumbers', 'bankAccounts', 'upiIds', 'phishingLinks', 'emailAddresses'];
   let anyIntel = false;
   for (const key of SCORED_KEYS) {
@@ -373,21 +399,9 @@ function printPayload(p) {
     }
   }
 
-  // Extra structured arrays
-  const EXTRA_KEYS = ['caseIds', 'policyNumbers', 'orderNumbers'];
-  for (const key of EXTRA_KEYS) {
-    if (intel[key]?.length > 0) {
-      anyIntel = true;
-      console.log(D('  │    ') + D(pad(key, 22) + ': ') + CY(JSON.stringify(intel[key])));
-    }
-  }
-
-  // ── otherInfo ─────────────────────────────────────────────────────────────
   if (intel.otherInfo?.length > 0) {
     anyIntel = true;
     console.log(D('  │    ') + D(pad('otherInfo', 22) + ':'));
-
-    // Group by tag prefix
     const groups = {};
     for (const item of intel.otherInfo) {
       const colonIdx = item.indexOf(':');
@@ -396,26 +410,8 @@ function printPayload(p) {
       if (!groups[tag]) groups[tag] = [];
       groups[tag].push(value);
     }
-
-    const TAG_COLORS = {
-      persona:      C.cyan,
-      amount:       C.green,
-      organisation: '\x1b[34m',
-      location:     C.yellow,
-      deadline:     C.red,
-      id:           C.cyan,
-      threat:       C.red,
-      'remote-app': '\x1b[33m',
-    };
-
     for (const [tag, values] of Object.entries(groups)) {
-      const col      = TAG_COLORS[tag] || C.cyan;
-      const tagLabel = `[${tag}]`.padEnd(14);
-      console.log(
-        D('  │      ') +
-        `${col}${tagLabel}${C.reset}` +
-        D(values.map(v => `"${v}"`).join(', '))
-      );
+      console.log(D('  │      ') + CY(`[${tag}]`.padEnd(14)) + D(values.map(v => `"${v}"`).join(', ')));
     }
   }
 
@@ -426,12 +422,8 @@ function printPayload(p) {
     const words = p.agentNotes.split(' ');
     let line = '  │    ';
     for (const word of words) {
-      if (line.length + word.length > 72) {
-        console.log(D(line.trimEnd()));
-        line = '  │    ' + word + ' ';
-      } else {
-        line += word + ' ';
-      }
+      if (line.length + word.length > 72) { console.log(D(line.trimEnd())); line = '  │    ' + word + ' '; }
+      else line += word + ' ';
     }
     if (line.trim().length > 6) console.log(D(line.trimEnd()));
   }
@@ -446,23 +438,11 @@ async function runScenario(scenario, callbackUrl) {
   const hdrs       = API_KEY ? { 'x-api-key': API_KEY } : {};
 
   const result = {
-    scenarioId:     scenario.scenarioId,
-    sessionId,
-    turns:          0,
-    responseTimes:  [],
-    crashed:        false,
-    timedOut:       false,
-    inactivityStop: false,   // ← NEW
-    crashedOnTurn:  null,
-    finalPayload:   null,
-    turnResponseOk: false,
-    checks: {
-      reachable:      false,
-      returns200:     false,
-      hasReplyField:  false,
-      allUnder30s:    true,
-      handles10Turns: false,
-    },
+    scenarioId: scenario.scenarioId, sessionId,
+    turns: 0, responseTimes: [],
+    crashed: false, timedOut: false, inactivityStop: false, crashedOnTurn: null,
+    finalPayload: null, turnResponseOk: false,
+    checks: { reachable: false, returns200: false, hasReplyField: false, allUnder30s: true, handles10Turns: false },
     scores: { det: 0, intel: 0, eng: 0, str: 0, total: 0 },
     intelResults: [],
   };
@@ -472,7 +452,7 @@ async function runScenario(scenario, callbackUrl) {
   console.log(D(`  ID: ${scenario.scenarioId}  |  Type: ${scenario.scamType}  |  Weight: x${scenario.weight}  |  Max turns: ${scenario.maxTurns}`));
   console.log(D(`  Session    : ${sessionId}`));
   console.log(D(`  Callback   : ${callbackUrl}`));
-  console.log(D(`  Inactivity : ${INACTIVITY_MS > 0 ? INACTIVITY_MS / 1000 + 's' : 'disabled'}`));
+  console.log(D(`  Mode       : ${WEB_MODE ? 'WEB (polling server.js /api/payload)' : 'CLI (local port ' + LISTEN_PORT + ')'}`));
   console.log(hr('─'));
   console.log('');
 
@@ -505,8 +485,7 @@ async function runScenario(scenario, callbackUrl) {
     if (!res.ok) {
       if (res.timedOut) {
         console.log(`  ${CROSS} TIMEOUT — exceeded ${TIMEOUT_MS / 1000}s`);
-        result.timedOut = true;
-        result.checks.allUnder30s = false;
+        result.timedOut = true; result.checks.allUnder30s = false;
       } else {
         console.log(`  ${CROSS} CONNECTION ERROR — ${res.error}`);
         result.crashed = true;
@@ -523,9 +502,7 @@ async function runScenario(scenario, callbackUrl) {
 
     if (res.status !== 200) {
       console.log(`  ${CROSS} HTTP ${res.status}  ${timeCol}${res.elapsed}ms${C.reset}`);
-      result.crashed = true;
-      result.crashedOnTurn = turn + 1;
-      break;
+      result.crashed = true; result.crashedOnTurn = turn + 1; break;
     }
     result.checks.returns200 = true;
 
@@ -547,17 +524,12 @@ async function runScenario(scenario, callbackUrl) {
       console.log(`  ${TICK} HTTP 200  ${timeCol}${res.elapsed}ms${C.reset}`);
       console.log(`  ${CROSS} No reply/message/text field in response`);
       console.log(D(`     Keys: ${Object.keys(res.data || {}).join(', ') || 'none'}`));
-      result.crashed = true;
-      result.crashedOnTurn = turn + 1;
-      break;
+      result.crashed = true; result.crashedOnTurn = turn + 1; break;
     }
 
     result.checks.hasReplyField = true;
     console.log(`  ${TICK} HTTP 200  ${timeCol}${res.elapsed}ms${C.reset}`);
-
-    if (!isTurnResponseValid) {
-      console.log(`  ${Y('~')} Turn response missing "status" field ${D('(costs 5 pts in structure score)')}`);
-    }
+    if (!isTurnResponseValid) console.log(`  ${Y('~')} Turn response missing "status" field ${D('(costs 5 pts)')}`);
 
     if (VERBOSE) {
       console.log(D('\n  -- RESPONSE --'));
@@ -577,134 +549,93 @@ async function runScenario(scenario, callbackUrl) {
       break;
     }
 
-    // ── Inter-turn delay + inactivity check ──────────────────────────────────
     if (turn < scenario.maxTurns - 1) {
       const { timedOut: inactive } = await waitWithInactivity();
-      if (inactive) {
-        result.inactivityStop = true;
-        result.crashedOnTurn  = turn + 1;
-        break;
-      }
+      if (inactive) { result.inactivityStop = true; result.crashedOnTurn = turn + 1; break; }
     }
   }
 
   if (result.turns >= scenario.maxTurns) result.checks.handles10Turns = true;
 
-  // Wait for final payload callback
+  // ── Wait for final payload callback ──────────────────────────────────────
   console.log('\n' + hr('─'));
-  if (result.inactivityStop) {
-    console.log(Y(`  ⚠  Scenario stopped early (scammer silent ${INACTIVITY_MS / 1000}s). Waiting for callback...`));
-  } else {
-    console.log(BC(`  ⏳ Conversation done. Waiting for final payload callback...`));
-  }
-  console.log(D(`  Configure your honeypot to POST to: ${callbackUrl}`));
+  console.log(BC(`  ⏳ Conversation done. Waiting for final payload callback...`));
+  console.log(D(`  Honeypot should POST to: ${callbackUrl}`));
   console.log('');
 
   result.finalPayload = await waitForCallback(sessionId, PAYLOAD_WAIT);
 
   if (!result.finalPayload) {
     console.log(`  ${CROSS} ${R(`No payload received within ${PAYLOAD_WAIT}s.`)}`);
-    console.log(Y(`  ⚠  Set FINAL_CALLBACK_URL=${callbackUrl} in your honeypot env`));
+    console.log(Y(`  ⚠  Set in your honeypot env:`));
+    console.log(Y(`     FINAL_CALLBACK_URL=${callbackUrl}`));
   } else {
     console.log(`  ${TICK} ${G('Final payload received!')}`);
     printPayload(result.finalPayload);
-
-    if (VERBOSE) {
-      console.log(D('\n  -- RAW JSON --'));
-      console.log(D(JSON.stringify(result.finalPayload, null, 2).split('\n').map(l => '  ' + l).join('\n')));
-    }
   }
 
-  // ── Score This Scenario ───────────────────────────────────────────────────
+  // ── Score ─────────────────────────────────────────────────────────────────
   const payload = result.finalPayload;
-
   console.log('\n' + hr('═'));
   console.log(BW(`  SCORE — ${scenario.name}`));
   console.log(D(`  Det(20) + Intel(40) + Engagement(20) + Structure(20) = 100`));
   console.log(hr('─'));
 
-  // [1] Scam Detection
   console.log('\n' + BW('  [1] SCAM DETECTION  (20 pts)'));
   const det = scoreDetection(payload);
   result.scores.det = det.earned;
   console.log(`  ${det.detected ? TICK : CROSS} scamDetected = ${JSON.stringify(payload?.scamDetected ?? 'MISSING')}  →  ${det.detected ? G('+20 pts') : R('0 pts')}`);
 
-  // [2] Intelligence Extraction
   console.log('\n' + BW(`  [2] INTELLIGENCE EXTRACTION  (40 pts — 10 pts per type)`));
   const intelScore = scoreIntelligence(payload?.extractedIntelligence, scenario.fakeData);
   result.scores.intel = intelScore.earned;
   result.intelResults = intelScore.results;
 
   for (const r of intelScore.results) {
-    const pts = r.scored ? (r.found ? G(`+10 pts`) : R('0 pts — NOT FOUND')) : D('(not scored)');
+    const pts  = r.scored ? (r.found ? G(`+10 pts`) : R('0 pts — NOT FOUND')) : D('(not scored)');
     const mark = r.found ? TICK : (r.scored ? CROSS : D('·'));
     console.log(`  ${mark}  ${pad(r.arrayKey, 22)} ${D(`"${r.value}"`)}  →  ${pts}`);
-    if (r.found && r.allValues.length > 0) {
-      console.log(`       ${D('extracted: ' + r.allValues.map(v => `"${v}"`).join(', '))}`);
-    } else if (!r.found && r.allValues.length > 0) {
-      console.log(`       ${Y('array[' + r.allValues.length + ']: ' + r.allValues.map(v => `"${v}"`).join(', '))}`);
-    } else if (!r.found) {
-      console.log(`       ${D('array is empty []')}`);
-    }
+    if (r.found && r.allValues.length > 0)   console.log(`       ${D('extracted: ' + r.allValues.map(v => `"${v}"`).join(', '))}`);
+    else if (!r.found && r.allValues.length > 0) console.log(`       ${Y('array[' + r.allValues.length + ']: ' + r.allValues.map(v => `"${v}"`).join(', '))}`);
+    else if (!r.found) console.log(`       ${D('array is empty []')}`);
   }
 
-  // otherInfo summary (not scored, context only)
   const otherInfo = payload?.extractedIntelligence?.otherInfo || [];
   if (otherInfo.length > 0) {
     console.log(`\n  ${D('·')}  ${D(pad('otherInfo (bonus context)', 22))}  ${CY(`${otherInfo.length} item(s) — not scored`)}`);
-    for (const item of otherInfo.slice(0, 8)) {
-      console.log(`       ${D('"' + item + '"')}`);
-    }
+    for (const item of otherInfo.slice(0, 8)) console.log(`       ${D('"' + item + '"')}`);
     if (otherInfo.length > 8) console.log(`       ${D(`… and ${otherInfo.length - 8} more`)}`);
   }
 
   const intelCapNote = intelScore.raw > 40 ? D(` (${intelScore.raw} raw, capped at 40)`) : '';
   console.log(`  ${B('Subtotal:')} ${intelScore.earned >= 30 ? G(intelScore.earned + '/40') : Y(intelScore.earned + '/40')}${intelCapNote}`);
 
-  // [3] Engagement Quality
   console.log('\n' + BW('  [3] ENGAGEMENT QUALITY  (20 pts)'));
   const eng = scoreEngagement(payload, history.length);
   result.scores.eng = eng.earned;
-  for (const r of eng.rows) {
-    console.log(`  ${r.ok ? TICK : CROSS}  ${pad(r.label, 36)} ${r.ok ? G('+' + r.pts + ' pts') : D('0 pts')}`);
-  }
+  for (const r of eng.rows) console.log(`  ${r.ok ? TICK : CROSS}  ${pad(r.label, 36)} ${r.ok ? G('+' + r.pts + ' pts') : D('0 pts')}`);
   console.log(D(`     duration: ${eng.dur}s  |  messages: ${eng.msgs}`));
   console.log(`  ${B('Subtotal:')} ${eng.earned >= 15 ? G(eng.earned + '/20') : Y(eng.earned + '/20')}`);
 
-  // [4] Response Structure
   console.log('\n' + BW('  [4] RESPONSE STRUCTURE  (20 pts)'));
-
   const statusOk = result.turnResponseOk;
   console.log(`  ${statusOk ? TICK : CROSS}  ${pad('status: "success" in turn response', 36)} ${statusOk ? G('+5 pts') : R('0 pts')}`);
-
   const str = scoreStructure(payload);
   for (const f of str.fields) {
     if (f.pts === 0) continue;
     console.log(`  ${f.ok ? TICK : CROSS}  ${pad(f.label, 36)} ${f.ok ? G(`+${f.pts} pts`) : R(`0 pts`)}`);
   }
+  const strTotal = Math.min((statusOk ? 5 : 0) + str.earned, 20);
+  result.scores.str = strTotal;
+  console.log(`  ${B('Subtotal:')} ${strTotal >= 15 ? G(strTotal + '/20') : Y(strTotal + '/20')}`);
 
-  const statusPts = statusOk ? 5 : 0;
-  const strTotal  = statusPts + str.earned;
-  result.scores.str = Math.min(strTotal, 20);
-
-  console.log(`  ${B('Subtotal:')} ${result.scores.str >= 15 ? G(result.scores.str + '/20') : Y(result.scores.str + '/20')}`);
-
-  // Response times
   console.log('\n' + BW('  [*] RESPONSE TIMES  (SLA, not scored)'));
   if (result.responseTimes.length > 0) {
     const tMin = Math.min(...result.responseTimes);
     const tMax = Math.max(...result.responseTimes);
     const tAvg = Math.round(result.responseTimes.reduce((a, b) => a + b, 0) / result.responseTimes.length);
     console.log(`  Min: ${tMin}ms  |  Avg: ${tAvg}ms  |  Max: ${tMax}ms`);
-    console.log(tMax >= TIMEOUT_MS
-      ? `  ${CROSS} ${R('At least one request hit the 30s timeout!')}`
-      : `  ${TICK} All turns within 30s`);
-  }
-
-  // Inactivity report
-  if (result.inactivityStop) {
-    console.log('\n' + BW('  [*] INACTIVITY STOP'));
-    console.log(`  ${Y('⚠')}  ${Y(`Scenario ended at turn ${result.crashedOnTurn} — scammer silent ${INACTIVITY_MS / 1000}s`)}`);
+    console.log(tMax >= TIMEOUT_MS ? `  ${CROSS} ${R('At least one request hit the 30s timeout!')}` : `  ${TICK} All turns within 30s`);
   }
 
   // Conversation quality
@@ -719,35 +650,21 @@ async function runScenario(scenario, callbackUrl) {
       replyCounts[key] = (replyCounts[key] || 0) + 1;
     }
     const repeated = Object.entries(replyCounts).filter(([, c]) => c > 1);
-
     const hasHinglish = honeypotReplies.some(r => /\b(yaar|na|hai|karo|bhai|toh|sahi|theek|accha|haan)\b/i.test(r));
     const hasHindi    = honeypotReplies.some(r => /[\u0900-\u097F]/.test(r));
-
-    const avgLen = Math.round(honeypotReplies.reduce((s, r) => s + r.length, 0) / honeypotReplies.length);
-    const lengthOk = avgLen >= 60 && avgLen <= 300;
-
+    const avgLen      = Math.round(honeypotReplies.reduce((s, r) => s + r.length, 0) / honeypotReplies.length);
+    const lengthOk    = avgLen >= 60 && avgLen <= 300;
     const emotionWords = /\b(wow|amazing|confused|scared|worried|excited|please|help|urgent|quickly|yaar|really|dont want|dont miss|happy|great|okay|oh no|oh wow)\b/i;
-    const hasEmotion = honeypotReplies.filter(r => emotionWords.test(r)).length;
+    const hasEmotion   = honeypotReplies.filter(r => emotionWords.test(r)).length;
     const emotionRatio = Math.round((hasEmotion / honeypotReplies.length) * 100);
-
     const naturalFraming = /\b(just to be safe|want to make sure|in case|if something goes wrong|just checking|to confirm|to be sure|just want)\b/i;
-    const naturalCount = honeypotReplies.filter(r => naturalFraming.test(r)).length;
+    const naturalCount   = honeypotReplies.filter(r => naturalFraming.test(r)).length;
 
-    console.log(`  ${repeated.length === 0 ? TICK : Y('~')}  Repetition        : ${repeated.length === 0 ? G('No repeated replies') : Y(`${repeated.length} repeated reply(s) detected`)}`);
-    console.log(`  ${lengthOk ? TICK : Y('~')}  Reply length      : ${avgLen} chars avg ${lengthOk ? G('(natural range 60-300)') : Y('(may be too short or too long)')}`);
-    console.log(`  ${emotionRatio >= 50 ? TICK : Y('~')}  Emotional tone    : ${emotionRatio}% of replies show emotion ${emotionRatio >= 50 ? G('(good)') : Y('(may feel robotic)')}`);
-    console.log(`  ${naturalCount > 0 ? TICK : Y('~')}  Natural framing   : ${naturalCount}/${honeypotReplies.length} replies use natural intel-request framing`);
-    console.log(`  ${(hasHindi || hasHinglish) ? TICK : D('-')}  Language matching : ${hasHindi ? G('Hindi used') : hasHinglish ? G('Hinglish used') : D('English only')}`);
-
-    if (repeated.length > 0) {
-      for (const [key] of repeated.slice(0, 2)) {
-        console.log(D(`     ↳ repeated: "${key.slice(0, 65)}..."`));
-      }
-    }
-
-    const qualityScore = (repeated.length === 0 ? 1 : 0) + (lengthOk ? 1 : 0) + (emotionRatio >= 50 ? 1 : 0) + (naturalCount > 0 ? 1 : 0);
-    const qualityLabel = qualityScore >= 4 ? G('REALISTIC') : qualityScore >= 3 ? CY('MOSTLY NATURAL') : qualityScore >= 2 ? Y('SOMEWHAT ROBOTIC') : R('ROBOTIC');
-    console.log(`  Overall quality   : ${qualityLabel} (${qualityScore}/4 checks passed)`);
+    console.log(`  ${repeated.length === 0 ? TICK : Y('~')}  Repetition        : ${repeated.length === 0 ? G('No repeated replies') : Y(`${repeated.length} repeated reply(s)`)}`);
+    console.log(`  ${lengthOk ? TICK : Y('~')}  Reply length      : ${avgLen} chars avg ${lengthOk ? G('(natural)') : Y('(off)')}`);
+    console.log(`  ${emotionRatio >= 50 ? TICK : Y('~')}  Emotional tone    : ${emotionRatio}%`);
+    console.log(`  ${naturalCount > 0 ? TICK : Y('~')}  Natural framing   : ${naturalCount}/${honeypotReplies.length} replies`);
+    console.log(`  ${(hasHindi || hasHinglish) ? TICK : D('-')}  Language matching : ${hasHindi ? G('Hindi') : hasHinglish ? G('Hinglish') : D('English only')}`);
   }
 
   result.scores.total = result.scores.det + result.scores.intel + result.scores.eng + result.scores.str;
@@ -776,32 +693,26 @@ function printGrandSummary(results, scenarios) {
   console.log(D('  ' + '─'.repeat(70)));
 
   for (const r of results) {
-    const sc     = scenarios.find(s => s.scenarioId === r.scenarioId);
-    const weight = (sc?.weight ?? 10) / totalWeight;
+    const sc      = scenarios.find(s => s.scenarioId === r.scenarioId);
+    const weight  = (sc?.weight ?? 10) / totalWeight;
     const contrib = parseFloat((r.scores.total * weight).toFixed(2));
     finalScore += contrib;
 
-    const status = r.crashed
-      ? R(`CRASHED at T${r.crashedOnTurn}`)
-      : r.timedOut
-        ? R(`TIMEOUT at T${r.crashedOnTurn}`)
-      : r.inactivityStop
-        ? Y(`INACTIVITY T${r.crashedOnTurn}`)
-        : !r.finalPayload
-          ? Y('NO PAYLOAD')
-          : `${getGrade(r.scores.total).color}${getGrade(r.scores.total).label}${C.reset}`;
+    const status = r.crashed ? R(`CRASHED at T${r.crashedOnTurn}`)
+      : r.timedOut     ? R(`TIMEOUT at T${r.crashedOnTurn}`)
+      : r.inactivityStop ? Y(`INACTIVITY T${r.crashedOnTurn}`)
+      : !r.finalPayload  ? Y('NO PAYLOAD')
+      : `${getGrade(r.scores.total).color}${getGrade(r.scores.total).label}${C.reset}`;
 
     const sc2 = r.scores.total >= 70 ? C.green : r.scores.total >= 50 ? C.yellow : C.red;
     console.log(`  ${pad(r.scenarioId, 28)} ${sc2}${rpad(r.scores.total + '/100', 7)}${C.reset} ${D(rpad((weight * 100).toFixed(1) + '%', 7))} ${CY(rpad(contrib.toFixed(2), 8))} ${status}`);
     console.log(D(`  ${pad('', 28)} Det:${r.scores.det}/20  Intel:${r.scores.intel}/40  Eng:${r.scores.eng}/20  Str:${r.scores.str}/20`));
-
     const missing = (r.intelResults || []).filter(x => !x.found && x.scored);
     for (const m of missing) console.log(D(`  ${pad('', 28)}  ✗ ${m.arrayKey}: "${m.value}"`));
     console.log('');
   }
 
   console.log(D('  ' + '─'.repeat(70)));
-
   const g = getGrade(finalScore);
   console.log(`\n  ${B('FINAL SCORE  =  ')}${g.color}${C.bold}${finalScore.toFixed(1)} / 100${C.reset}  ${g.color}${g.label}${C.reset}`);
 
@@ -810,60 +721,58 @@ function printGrandSummary(results, scenarios) {
   console.log(hr('─'));
 
   const chk = [
-    { label: 'Endpoint publicly accessible',          ok: results.some(r => r.checks.reachable) },
-    { label: 'API returns HTTP 200',                  ok: results.some(r => r.checks.returns200) },
-    { label: 'Response has reply field',              ok: results.some(r => r.checks.hasReplyField) },
-    { label: 'Turn response includes status field',   ok: results.some(r => r.turnResponseOk) },
-    { label: 'All responses under 30s',               ok: results.every(r => r.checks.allUnder30s) },
+    { label: 'Endpoint publicly accessible',        ok: results.some(r => r.checks.reachable) },
+    { label: 'API returns HTTP 200',                ok: results.some(r => r.checks.returns200) },
+    { label: 'Response has reply field',            ok: results.some(r => r.checks.hasReplyField) },
+    { label: 'Turn response includes status field', ok: results.some(r => r.turnResponseOk) },
+    { label: 'All responses under 30s',             ok: results.every(r => r.checks.allUnder30s) },
   ];
 
   for (const c of chk) console.log(`  ${c.ok ? TICK : CROSS}  ${c.label}`);
 
   const failed = chk.filter(c => !c.ok).length;
   console.log('\n' + hr('─'));
-
-  if (failed === 0) {
-    console.log(G(`  ✅  All checks passed. Final score: ${finalScore.toFixed(1)}/100. Ready for submission.`));
-  } else {
-    console.log(R(`  ❌  ${failed} requirement(s) failed. Fix before submitting.`));
-  }
-
+  if (failed === 0) console.log(G(`  ✅  All checks passed. Final score: ${finalScore.toFixed(1)}/100. Ready for submission.`));
+  else              console.log(R(`  ❌  ${failed} requirement(s) failed. Fix before submitting.`));
   console.log(hr('═') + '\n');
   return { finalScore, failed };
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
-  try {
-    await startCallbackServer();
-  } catch (err) {
-    console.error(R(`\n  ❌ Failed to start callback server: ${err.message}`));
-    process.exit(1);
+  // Start local callback server ONLY in CLI mode
+  if (!WEB_MODE) {
+    try { await startCallbackServer(); }
+    catch (err) {
+      console.error(R(`\n  ❌ Failed to start callback server: ${err.message}`));
+      process.exit(1);
+    }
   }
 
-  const localIP     = getLocalIP();
-  const callbackUrl = `http://${localIP}:${LISTEN_PORT}/callback`;
+  // Determine callbackUrl
+  const callbackUrl = WEB_MODE
+    ? INJECTED_CALLBACK_URL                              // e.g. https://tester-honeypot.onrender.com/callback
+    : `http://${getLocalIP()}:${LISTEN_PORT}/callback`;  // local fallback
 
   console.log('\n' + hr('═'));
-  console.log(BC('  🍯  HONEYTRAP CLI TESTER'));
+  console.log(BC('  🍯  HONEYTRAP TESTER'));
   console.log(D(`  Endpoint    : ${ENDPOINT}`));
   console.log(D(`  API Key     : ${API_KEY ? '***' + API_KEY.slice(-4) : '(none)'}`));
-  console.log(D(`  Timeout     : ${TIMEOUT_MS / 1000}s/request  |  Turn delay: ${TURN_DELAY_MS}ms`));
-  console.log(D(`  Inactivity  : ${INACTIVITY_MS > 0 ? INACTIVITY_MS / 1000 + 's  (--inactivity <ms> to change)' : 'disabled'}`));
-  console.log(D(`  Scenarios   : ${ONLY ? ONLY : `All ${SCENARIOS.length}`}${VERBOSE ? '  |  VERBOSE' : ''}`));
+  console.log(D(`  Mode        : ${WEB_MODE ? 'WEB (server.js /callback)' : 'CLI (port ' + LISTEN_PORT + ')'}`));
+  console.log(D(`  Timeout     : ${TIMEOUT_MS / 1000}s  |  Delay: ${TURN_DELAY_MS}ms  |  Wait: ${PAYLOAD_WAIT}s`));
+  console.log(D(`  Scenarios   : ${ONLY ? ONLY : `All ${SCENARIOS.length}`}`));
   console.log('');
-  console.log(G('  ┌─────────────────────────────────────────────────────────┐'));
-  console.log(G('  │  CALLBACK SERVER READY                                  │'));
-  console.log(G(`  │  URL: ${callbackUrl.padEnd(51)}│`));
-  console.log(G('  │  Set this as FINAL_CALLBACK_URL in your honeypot env    │'));
-  console.log(G('  └─────────────────────────────────────────────────────────┘'));
+  console.log(G('  ┌─────────────────────────────────────────────────────────────┐'));
+  console.log(G('  │  CALLBACK URL (set this in your honeypot .env)              │'));
+  console.log(G(`  │  FINAL_CALLBACK_URL=${callbackUrl.padEnd(41)}│`));
+  console.log(G('  └─────────────────────────────────────────────────────────────┘'));
   console.log(hr('═'));
 
   const toRun = ONLY ? SCENARIOS.filter(s => s.scenarioId === ONLY) : SCENARIOS;
 
   if (!toRun.length) {
     console.error(R(`\n  No scenario matching "${ONLY}". Available: ${SCENARIOS.map(s => s.scenarioId).join(', ')}`));
-    await stopCallbackServer();
+    if (!WEB_MODE) await stopCallbackServer();
     process.exit(1);
   }
 
@@ -873,7 +782,7 @@ async function main() {
     if (toRun.length > 1) await sleep(1200);
   }
 
-  await stopCallbackServer();
+  if (!WEB_MODE) await stopCallbackServer();
 
   const summary = printGrandSummary(results, toRun);
   process.exit(summary.failed > 0 ? 1 : 0);
@@ -882,6 +791,6 @@ async function main() {
 main().catch(async err => {
   console.error(R(`\nUnexpected error: ${err.message}`));
   console.error(err.stack);
-  await stopCallbackServer();
+  if (!WEB_MODE) await stopCallbackServer();
   process.exit(1);
 });
